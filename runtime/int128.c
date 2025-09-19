@@ -1,4 +1,3 @@
-// Minimal runtime helpers for 128-bit integer arithmetic used by codegen.
 #include <stdint.h>
 #include <stdio.h>
 

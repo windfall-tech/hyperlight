@@ -1,10 +1,23 @@
-**/*~
-**/\#*
-**/*.o
-**/*.s
-**/a.out
+# Backup and temporary files
+*~
+
+# Compiled object and assembly files
+*.o
+*.s
+a.out
+
+# System and build directories
 /tmp*
-/thirdparty
-/hyperlight
+/thirdparty/
+/hyperlight/
+/stage2/
+
+# Test binaries
 /test/*.exe
-/stage2
+
+# Other Binaries
+hyperlight
+
+# IDE and editor files
+.vscode/
+.idea/
