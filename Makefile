@@ -3,6 +3,10 @@ CFLAGS=-std=c11 -g -fno-common -Wall -Wno-switch
 SRCS=$(wildcard *.c)
 OBJS=$(SRCS:.c=.o)
 
+# Include runtime sources
+SRCS += $(wildcard runtime/*.c)
+OBJS = $(SRCS:.c=.o)
+
 TEST_SRCS=$(wildcard test/*.c)
 TESTS=$(TEST_SRCS:.c=.exe)
 
@@ -15,7 +19,7 @@ $(OBJS): hyperlight.h
 
 test/%.exe: hyperlight test/%.c
 	./hyperlight -Iinclude -Itest -c -o test/$*.o test/$*.c
-	$(CC) -pthread -o $@ test/$*.o -xc test/common
+	$(CC) -pthread -o $@ test/$*.o runtime/int128.o -xc test/common
 
 test: $(TESTS)
 	for i in $^; do echo $$i; ./$$i || exit 1; echo; done
@@ -35,7 +39,7 @@ stage2/%.o: hyperlight %.c
 stage2/test/%.exe: stage2/hyperlight test/%.c
 	mkdir -p stage2/test
 	./stage2/hyperlight -Iinclude -Itest -c -o stage2/test/$*.o test/$*.c
-	$(CC) -pthread -o $@ stage2/test/$*.o -xc test/common
+	$(CC) -pthread -o $@ stage2/test/$*.o runtime/int128.o -xc test/common
 
 test-stage2: $(TESTS:test/%=stage2/test/%)
 	for i in $^; do echo $$i; ./$$i || exit 1; echo; done

@@ -7,11 +7,13 @@ Type *ty_char = &(Type){TY_CHAR, 1, 1};
 Type *ty_short = &(Type){TY_SHORT, 2, 2};
 Type *ty_int = &(Type){TY_INT, 4, 4};
 Type *ty_long = &(Type){TY_LONG, 8, 8};
+Type *ty_int128 = &(Type){TY_INT128, 16, 16};
 
 Type *ty_uchar = &(Type){TY_CHAR, 1, 1, true};
 Type *ty_ushort = &(Type){TY_SHORT, 2, 2, true};
 Type *ty_uint = &(Type){TY_INT, 4, 4, true};
 Type *ty_ulong = &(Type){TY_LONG, 8, 8, true};
+Type *ty_uint128 = &(Type){TY_INT128, 16, 16, true};
 
 Type *ty_float = &(Type){TY_FLOAT, 4, 4};
 Type *ty_double = &(Type){TY_DOUBLE, 8, 8};
@@ -28,7 +30,8 @@ static Type *new_type(TypeKind kind, int size, int align) {
 bool is_integer(Type *ty) {
   TypeKind k = ty->kind;
   return k == TY_BOOL || k == TY_CHAR || k == TY_SHORT ||
-         k == TY_INT  || k == TY_LONG || k == TY_ENUM;
+         k == TY_INT  || k == TY_LONG || k == TY_ENUM ||
+         k == TY_INT128;
 }
 
 bool is_flonum(Type *ty) {
@@ -58,6 +61,8 @@ bool is_compatible(Type *t1, Type *t2) {
   case TY_SHORT:
   case TY_INT:
   case TY_LONG:
+    return t1->is_unsigned == t2->is_unsigned;
+  case TY_INT128:
     return t1->is_unsigned == t2->is_unsigned;
   case TY_FLOAT:
   case TY_DOUBLE:

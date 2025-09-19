@@ -160,7 +160,7 @@ static bool is_keyword(Token *tok) {
 
   if (map.capacity == 0) {
     static char *kw[] = {
-      "return", "if", "else", "for", "while", "int", "sizeof", "char",
+      "return", "if", "else", "for", "while", "int", "int128", "sizeof", "char",
       "struct", "union", "short", "long", "void", "typedef", "_Bool",
       "enum", "static", "goto", "break", "continue", "switch", "case",
       "default", "extern", "_Alignof", "_Alignas", "do", "signed",

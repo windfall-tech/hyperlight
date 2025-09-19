@@ -206,6 +206,8 @@ static void load(Type *ty) {
   case TY_LDOUBLE:
     println("  fldt (%%rax)");
     return;
+  default:
+    break;
   }
 
   char *insn = ty->is_unsigned ? "movz" : "movs";
@@ -221,7 +223,15 @@ static void load(Type *ty) {
     println("  %swl (%%rax), %%eax", insn);
   else if (ty->size == 4)
     println("  movsxd (%%rax), %%rax");
-  else
+  else if (ty->size == 8)
+    println("  mov (%%rax), %%rax");
+  else if (ty->size == 16) {
+    // Load 128-bit integer into RDX:RAX (high:low).
+    // Read the high 8 bytes first so we don't clobber the address
+    // stored in %%rax when loading the low 8 bytes.
+    println("  mov 8(%%rax), %%rdx");
+    println("  mov (%%rax), %%rax");
+  } else
     println("  mov (%%rax), %%rax");
 }
 
@@ -254,7 +264,13 @@ static void store(Type *ty) {
     println("  mov %%ax, (%%rdi)");
   else if (ty->size == 4)
     println("  mov %%eax, (%%rdi)");
-  else
+  else if (ty->size == 8)
+    println("  mov %%rax, (%%rdi)");
+  else if (ty->size == 16) {
+    // Store 128-bit from RAX(low) and RDX(high)
+    println("  mov %%rax, (%%rdi)");
+    println("  mov %%rdx, 8(%%rdi)");
+  } else
     println("  mov %%rax, (%%rdi)");
 }
 
@@ -292,6 +308,10 @@ static int getTypeId(Type *ty) {
   case TY_INT:
     return ty->is_unsigned ? U32 : I32;
   case TY_LONG:
+    return ty->is_unsigned ? U64 : I64;
+  case TY_INT128:
+    // Fallback to 64-bit id for casting table lookups; 128-bit uses
+    // specialized codepaths elsewhere.
     return ty->is_unsigned ? U64 : I64;
   case TY_FLOAT:
     return F32;
@@ -1112,16 +1132,134 @@ static void gen_expr(Node *node) {
 
   switch (node->kind) {
   case ND_ADD:
+    if (node->lhs->ty->kind == TY_INT128) {
+      // Evaluate rhs and push (low, high)
+      gen_expr(node->rhs);
+      if (node->rhs->ty->is_unsigned)
+        println("  mov $0, %%rdx");
+      else
+        println("  cqo");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      // Evaluate lhs and push
+      gen_expr(node->lhs);
+      if (node->lhs->ty->is_unsigned)
+        println("  mov $0, %%rdx");
+      else
+        println("  cqo");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      // reserve 16 bytes for result
+      println("  sub $16, %%rsp");
+      // args: res=%rsp, a=%rsp+16, b=%rsp+32
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_add@PLT");
+      // load result into rax/rdx
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      // cleanup stack (result + lhs + rhs = 16 + 32)
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  add %s, %s", di, ax);
     return;
   case ND_SUB:
+    if (node->lhs->ty->kind == TY_INT128) {
+      gen_expr(node->rhs);
+      if (node->rhs->ty->is_unsigned)
+        println("  mov $0, %%rdx");
+      else
+        println("  cqo");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      if (node->lhs->ty->is_unsigned)
+        println("  mov $0, %%rdx");
+      else
+        println("  cqo");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_sub@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  sub %s, %s", di, ax);
     return;
   case ND_MUL:
+    if (node->lhs->ty->kind == TY_INT128) {
+      // call runtime mul: res, a, b
+      gen_expr(node->rhs);
+      if (node->rhs->ty->is_unsigned)
+        println("  mov $0, %%rdx");
+      else
+        println("  cqo");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      if (node->lhs->ty->is_unsigned)
+        println("  mov $0, %%rdx");
+      else
+        println("  cqo");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_mul@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  imul %s, %s", di, ax);
     return;
   case ND_DIV:
   case ND_MOD:
+    if (node->lhs->ty->kind == TY_INT128) {
+      // choose signed/unsigned runtime helper
+      const char *divfn = node->ty->is_unsigned ? "__hl_u128_div@PLT" : "__hl_i128_div@PLT";
+      const char *modfn = node->ty->is_unsigned ? "__hl_u128_mod@PLT" : "__hl_i128_mod@PLT";
+
+      gen_expr(node->rhs);
+      // push rhs (low/high)
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      if (node->kind == ND_DIV)
+        println("  call %s", divfn);
+      else
+        println("  call %s", modfn);
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
+
     if (node->ty->is_unsigned) {
       println("  mov $0, %s", dx);
       println("  div %s", di);
@@ -1137,18 +1275,115 @@ static void gen_expr(Node *node) {
       println("  mov %%rdx, %%rax");
     return;
   case ND_BITAND:
+    if (node->lhs->ty->kind == TY_INT128) {
+      gen_expr(node->rhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_and@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  and %s, %s", di, ax);
     return;
   case ND_BITOR:
+    if (node->lhs->ty->kind == TY_INT128) {
+      gen_expr(node->rhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_or@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  or %s, %s", di, ax);
     return;
   case ND_BITXOR:
+    if (node->lhs->ty->kind == TY_INT128) {
+      gen_expr(node->rhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_xor@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  xor %s, %s", di, ax);
     return;
   case ND_EQ:
   case ND_NE:
   case ND_LT:
   case ND_LE:
+    if (node->lhs->ty->kind == TY_INT128) {
+      // call cmp helper
+      gen_expr(node->rhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      if (node->lhs->ty->is_unsigned)
+        println("  call __hl_u128_cmp@PLT");
+      else
+        println("  call __hl_i128_cmp@PLT");
+      // result in low 8 bytes of (rsp)
+      println("  mov (%%rsp), %%rax");
+      println("  add $48, %%rsp");
+
+      // now compare
+      println("  cmp $0, %%rax");
+      if (node->kind == ND_EQ) println("  sete %%al");
+      else if (node->kind == ND_NE) println("  setne %%al");
+      else if (node->kind == ND_LT) println("  setl %%al");
+      else if (node->kind == ND_LE) println("  setle %%al");
+      println("  movzb %%al, %%rax");
+      return;
+    }
+
     println("  cmp %s, %s", di, ax);
 
     if (node->kind == ND_EQ) {
@@ -1170,10 +1405,58 @@ static void gen_expr(Node *node) {
     println("  movzb %%al, %%rax");
     return;
   case ND_SHL:
+    if (node->lhs->ty->kind == TY_INT128) {
+      // call runtime shl: res, a, b
+      gen_expr(node->rhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      println("  call __hl_i128_shl@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
     println("  mov %%rdi, %%rcx");
     println("  shl %%cl, %s", ax);
     return;
   case ND_SHR:
+    if (node->lhs->ty->kind == TY_INT128) {
+      // call runtime shr: res, a, b (unsigned variant for unsigned types)
+      gen_expr(node->rhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      gen_expr(node->lhs);
+      println("  mov $0, %%rdx");
+      println("  push %%rdx");
+      println("  push %%rax");
+
+      println("  sub $16, %%rsp");
+      println("  lea 16(%%rsp), %%rsi");
+      println("  lea 32(%%rsp), %%rdx");
+      println("  mov %%rsp, %%rdi");
+      if (node->lhs->ty->is_unsigned)
+        println("  call __hl_u128_shr@PLT");
+      else
+        println("  call __hl_i128_shr@PLT");
+      println("  mov (%%rsp), %%rax");
+      println("  mov 8(%%rsp), %%rdx");
+      println("  add $48, %%rsp");
+      return;
+    }
+
     println("  mov %%rdi, %%rcx");
     if (node->lhs->ty->is_unsigned)
       println("  shr %%cl, %s", ax);

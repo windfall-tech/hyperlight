@@ -358,7 +358,7 @@ static void push_tag_scope(Token *tok, Type *ty) {
   hashmap_put2(&scope->tags, tok->loc, tok->len, ty);
 }
 
-// declspec = ("void" | "_Bool" | "char" | "short" | "int" | "long"
+// declspec = ("void" | "_Bool" | "char" | "short" | "int" | "int128" | "long"
 //             | "typedef" | "static" | "extern" | "inline"
 //             | "_Thread_local" | "__thread"
 //             | "signed" | "unsigned"
@@ -389,6 +389,7 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
     CHAR     = 1 << 4,
     SHORT    = 1 << 6,
     INT      = 1 << 8,
+    INT128   = 1 << 9,
     LONG     = 1 << 10,
     FLOAT    = 1 << 12,
     DOUBLE   = 1 << 14,
@@ -492,6 +493,8 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
       counter += SHORT;
     else if (equal(tok, "int"))
       counter += INT;
+    else if (equal(tok, "int128"))
+      counter += INT128;
     else if (equal(tok, "long"))
       counter += LONG;
     else if (equal(tok, "float"))
@@ -553,6 +556,13 @@ static Type *declspec(Token **rest, Token *tok, VarAttr *attr) {
     case UNSIGNED + LONG + LONG:
     case UNSIGNED + LONG + LONG + INT:
       ty = ty_ulong;
+      break;
+    case INT128:
+    case SIGNED + INT128:
+      ty = ty_int128;
+      break;
+    case UNSIGNED + INT128:
+      ty = ty_uint128;
       break;
     case FLOAT:
       ty = ty_float;
@@ -1499,7 +1509,7 @@ static bool is_typename(Token *tok) {
 
   if (map.capacity == 0) {
     static char *kw[] = {
-      "void", "_Bool", "char", "short", "int", "long", "struct", "union",
+      "void", "_Bool", "char", "short", "int", "int128", "long", "struct", "union",
       "typedef", "enum", "static", "extern", "_Alignas", "signed", "unsigned",
       "const", "volatile", "auto", "register", "restrict", "__restrict",
       "__restrict__", "_Noreturn", "float", "double", "typeof", "inline",
